@@ -1,4 +1,5 @@
 ﻿using AutoMapper;
+using MediBook.AppointmentSystem.API.Models;
 using MediBook.AppointmentSystem.Core.Entities;
 using MediBook.AppointmentSystem.Core.Interfaces;
 using MediBook.AppointmentSystem.Infrastructure.Data;
@@ -13,6 +14,8 @@ namespace MediBook.AppointmentSystem.Services
         private static readonly object _lock = new object();
         private readonly IMapper _mapper;
         private readonly IMemoryCache _cache;
+        private readonly SemaphoreSlim _semaphore = new SemaphoreSlim(1, 1);
+
 
         public AppointmentService(AppDbContext context, IMapper mapper, IMemoryCache cache)
         {
@@ -23,21 +26,29 @@ namespace MediBook.AppointmentSystem.Services
 
         public async Task<string> BookAppointmentAsync(Appointment appointment)
         {
-            lock (_lock)
+            await _semaphore.WaitAsync();
+            try
             {
-                bool isSlotTaken = _context.Appointments.Any(a =>
+                bool isSlotTaken = await _context.Appointments.AnyAsync(a =>
                     a.DoctorId == appointment.DoctorId &&
                     a.AppointmentDateTime == appointment.AppointmentDateTime &&
                     a.Status == Enum.Booked.ToString());
 
-                if (isSlotTaken) return "Slot already taken.";
+                if (isSlotTaken)
+                    return "Slot already taken.";
 
                 appointment.Status = Enum.Booked.ToString();
-                _context.Appointments.Add(appointment);
-                _context.SaveChanges();
+                await _context.Appointments.AddAsync(appointment);
+                await _context.SaveChangesAsync();
+
                 return "Appointment booked successfully.";
             }
+            finally
+            {
+                _semaphore.Release();
+            }
         }
+
 
         public async Task<bool> CancelAppointmentAsync(int appointmentId)
         {
@@ -48,20 +59,60 @@ namespace MediBook.AppointmentSystem.Services
             return true;
         }
 
-        public async Task<IEnumerable<Appointment>> GetAppointmentsByPatientId(int patientId)
+        public async Task<bool> UpdateAppointmentAsync(UpdateAppointmentDto updatedAppointment)
+        {
+            await _semaphore.WaitAsync();
+            try
+            {
+                var appointment = await _context.Appointments.FindAsync(updatedAppointment.AppointmentId);
+                if (appointment == null)
+                    return false;
+
+                appointment.AppointmentDateTime = updatedAppointment.AppointmentDateTime;
+                appointment.DoctorId = updatedAppointment.DoctorId;
+                appointment.Status = Enum.Booked.ToString();
+                appointment.Notes = updatedAppointment.Notes;
+
+                await _context.SaveChangesAsync();
+
+                // Clear cache
+                var cacheKey = $"Appointments_{appointment.PatientId}";
+                _cache.Remove(cacheKey);
+
+                return true;
+            }
+            finally
+            {
+                _semaphore.Release();
+            }
+        }
+
+
+
+        public async Task<IEnumerable<AppointmentDto>> GetAppointmentsByPatientId(int patientId)
         {
             var cacheKey = $"Appointments_{patientId}";
-            if (!_cache.TryGetValue(cacheKey, out List<Appointment> appointments))
+            if (!_cache.TryGetValue(cacheKey, out List<AppointmentDto> appointments))
             {
                 appointments = await _context.Appointments
-                    //.Include(a => a.Doctor)
-                    .Where(a => a.PatientId == patientId)
-                    .ToListAsync();
+                                    .Where(a => a.PatientId == patientId)
+                                    .Select(a => new AppointmentDto
+                                    {
+                                        AppointmentId = a.AppointmentId,
+                                        AppointmentDateTime = a.AppointmentDateTime,
+                                        Status = a.Status,
+                                        DoctorName = a.Doctor.Name,
+                                        DoctorId = a.Doctor.DoctorId,
+                                        PatientName = a.Patient.Name,
+                                        PatientEmail = a.Patient.Email
+                                    })
+                                    .AsNoTracking()
+                                    .ToListAsync();
 
                 _cache.Set(cacheKey, appointments, TimeSpan.FromMinutes(5));
             }
 
             return appointments;
         }
-    }
+	}
 }

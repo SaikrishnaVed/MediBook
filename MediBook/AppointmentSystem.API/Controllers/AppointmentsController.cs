@@ -22,7 +22,6 @@ namespace MediBook.AppointmentSystem.API.Controllers
         }
 
         [HttpPost]
-        
         public async Task<IActionResult> Book([FromBody] AppointmentDto dto)
         {
             var appointment = _mapper.Map<Appointment>(dto);
@@ -30,8 +29,22 @@ namespace MediBook.AppointmentSystem.API.Controllers
             return Ok(new { message = result });
         }
 
+        [HttpPut("update")]
+        public async Task<IActionResult> UpdateAppointment([FromBody] UpdateAppointmentDto updatedAppointment)
+        {
+            if (updatedAppointment == null || updatedAppointment.AppointmentId <= 0)
+                return BadRequest("Invalid appointment data.");
+
+            var result = await _service.UpdateAppointmentAsync(updatedAppointment);
+
+            if (!result)
+                return NotFound("Appointment not found.");
+
+            return Ok("Appointment updated successfully.");
+        }
+
+
         [HttpDelete("{id}")]
-        
         public async Task<IActionResult> Cancel(int id)
         {
             var result = await _service.CancelAppointmentAsync(id);
@@ -39,8 +52,7 @@ namespace MediBook.AppointmentSystem.API.Controllers
         }
 
         [HttpGet("patient/{patientId}")]
-        
-        public async Task<IActionResult> GetByPatient(int patientId)
+        public async Task<IActionResult> GetByPatient(int patientId, int? doctorId)
         {
             var appointments = await _service.GetAppointmentsByPatientId(patientId);
             return Ok(appointments);

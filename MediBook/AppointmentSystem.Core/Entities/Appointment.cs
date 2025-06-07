@@ -23,6 +23,8 @@ namespace MediBook.AppointmentSystem.Core.Entities
         [MaxLength(20)]
         public string Status { get; set; }
 
+        public string Notes { get; set; }
+
         public Doctor Doctor { get; set; }
         public Patient Patient { get; set; }
     }
